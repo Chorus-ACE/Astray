@@ -33,13 +33,13 @@ extension StorySurface: NSViewRepresentable {
 }
 #else
 extension StorySurface: UIViewRepresentable {
-    internal func makeUIView(context: Context) -> MetalStoryView {
+    internal func makeUIView(context: Context) -> _MetalStoryView {
         .init(renderer: renderer)
     }
     
-    internal func updateUIView(_ view: MetalStoryView, context: Context) {}
+    internal func updateUIView(_ view: _MetalStoryView, context: Context) {}
     
-    internal static func dismantleUIView(_ view: MetalStoryView, coordinator: ()) {
+    internal static func dismantleUIView(_ view: _MetalStoryView, coordinator: ()) {
         view.isPaused = true
         view.renderer.player.pause()
     }

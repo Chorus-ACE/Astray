@@ -31,7 +31,7 @@ public final class _MetalStoryView: MTKView {
         isAccessibilityElement = true
         accessibilityLabel = "Story player"
         accessibilityTraits = .button
-        registerForTraitChanges([UITraitDisplayScale.self]) { (view: MetalStoryView, _: UITraitCollection) in
+        registerForTraitChanges([UITraitDisplayScale.self]) { (view: _MetalStoryView, _: UITraitCollection) in
             view.synchronizeDrawableSize()
         }
         #endif
