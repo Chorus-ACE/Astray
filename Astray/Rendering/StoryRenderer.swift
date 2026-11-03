@@ -29,6 +29,7 @@ public final class StoryRenderer {
     private var playbackRevision = -1
     private var lastTime: Double = 0
     private var textScale: Double = 1
+    private var textCanvasWidth: Double = 1280
     private var continuationMark: (any MTLTexture)?
     
     public init(player: StoryPlayer, device: (any MTLDevice)? = MTLCreateSystemDefaultDevice()) throws {
@@ -134,8 +135,11 @@ public final class StoryRenderer {
         let delta = max(0, player.visualTime - lastTime)
         lastTime = player.visualTime
         let viewport = Self.viewport(width: target.width, height: target.height, scalesToFill: scalesToFill)
-        textScale = max(0.25, viewport.width / 1280)
-        live2D.stageHeight = max(1, Int(viewport.height))
+        let characterViewport = characterViewport(
+            width: max(1, Int(viewport.width)),
+            height: max(1, Int(viewport.height))
+        )
+        live2D.stageHeight = max(1, Int(characterViewport.height))
         let characters = stage.characters.values.sorted { $0.depth == $1.depth ? $0.id < $1.id : $0.depth < $1.depth }
         var characterTextures: [Int: any MTLTexture] = [:]
         var nativeScales: [Int: SIMD2<Float>] = [:]
@@ -193,8 +197,12 @@ public final class StoryRenderer {
             clear: .init(red: 0.025, green: 0.03, blue: 0.045, alpha: 1)
         )
         worldEncoder.label = "Astray world, background prefab and particle layers"
+        let backgroundViewport = Self.viewport(width: world.width, height: world.height, scalesToFill: true)
+        let backgroundAspect = Float(world.width) / Float(world.height)
         do {
+            worldEncoder.setViewport(characterViewport)
             try drawEffects(layer: .bottom, stage: stage, encoder: worldEncoder)
+            worldEncoder.setViewport(backgroundViewport)
             let backgroundRect = worldRect(
                 .init(
                     0.5 - 1.21 * stage.dolly.x / 2,
@@ -210,7 +218,7 @@ public final class StoryRenderer {
                 draw(
                     previous,
                     rect: backgroundRect,
-                    uv: aspectFill(previous, aspect: 16 / 9),
+                    uv: aspectFill(previous, aspect: backgroundAspect),
                     effects: .init(4, sampling, distortion, 0),
                     encoder: worldEncoder
                 )
@@ -219,12 +227,13 @@ public final class StoryRenderer {
                 draw(
                     background,
                     rect: backgroundRect,
-                    uv: aspectFill(background, aspect: 16 / 9),
+                    uv: aspectFill(background, aspect: backgroundAspect),
                     color: .init(1, 1, 1, stage.backgroundMix),
                     effects: .init(4, sampling, distortion, 0),
                     encoder: worldEncoder
                 )
             }
+            worldEncoder.setViewport(characterViewport)
             try drawEffects(layer: .bottom, stage: stage, backgroundOnly: true, encoder: worldEncoder)
             try drawEffects(layer: .back, stage: stage, encoder: worldEncoder)
             for character in characters {
@@ -307,7 +316,7 @@ public final class StoryRenderer {
                 encoder: output
             )
             if let movie {
-                draw(movie, rect: .init(0, 0, 1, 1), uv: aspectFill(movie, aspect: 16 / 9), encoder: output)
+                draw(movie, rect: .init(0, 0, 1, 1), uv: aspectFill(movie, aspect: backgroundAspect), encoder: output)
             }
             if player.dialogue.isVisible && !player.isDialogueHidden && !player.dialogue.isFullScreen {
                 drawDialogueBackground(player.dialogue, encoder: output)
@@ -339,14 +348,36 @@ public final class StoryRenderer {
     }
     
     internal static func viewport(width: Int, height: Int, scalesToFill: Bool = false) -> MTLViewport {
-        let horizontal = Double(width) / 1280
-        let vertical = Double(height) / 720
-        let scale = scalesToFill ? max(horizontal, vertical) : min(horizontal, vertical)
+        if scalesToFill {
+            return .init(
+                originX: 0,
+                originY: 0,
+                width: Double(width),
+                height: Double(height),
+                znear: 0,
+                zfar: 1
+            )
+        }
+        let scale = min(Double(width) / 1280, Double(height) / 720)
         return .init(
             originX: (Double(width) - 1280 * scale) / 2,
             originY: (Double(height) - 720 * scale) / 2,
             width: 1280 * scale,
             height: 720 * scale,
+            znear: 0,
+            zfar: 1
+        )
+    }
+    
+    // Keep character height and baseline stable when the display aspect ratio changes.
+    internal func characterViewport(width: Int, height: Int) -> MTLViewport {
+        guard scalesToFill else { return Self.viewport(width: width, height: height) }
+        let stageWidth = Double(height) * 16 / 9
+        return .init(
+            originX: (Double(width) - stageWidth) / 2,
+            originY: 0,
+            width: stageWidth,
+            height: Double(height),
             znear: 0,
             zfar: 1
         )
@@ -364,14 +395,19 @@ public final class StoryRenderer {
     
     internal func interfaceViewport(width: Int, height: Int) -> MTLViewport {
         let bounds = CGRect(x: 0, y: 0, width: width, height: height)
-        let safeBounds = scalesToFill ? (interfaceBounds ?? bounds).intersection(bounds) : bounds
+        guard scalesToFill else { return Self.viewport(width: width, height: height) }
+        let safeBounds = (interfaceBounds ?? bounds).intersection(bounds)
         guard !safeBounds.isNull, safeBounds.width > 0, safeBounds.height > 0 else {
-            return Self.viewport(width: width, height: height)
+            return Self.viewport(width: width, height: height, scalesToFill: true)
         }
-        var viewport = Self.viewport(width: Int(safeBounds.width), height: Int(safeBounds.height))
-        viewport.originX += safeBounds.minX
-        viewport.originY += safeBounds.minY
-        return viewport
+        return .init(
+            originX: safeBounds.minX,
+            originY: safeBounds.minY,
+            width: safeBounds.width,
+            height: safeBounds.height,
+            znear: 0,
+            zfar: 1
+        )
     }
     
     private func setViewport(
@@ -385,7 +421,8 @@ public final class StoryRenderer {
         let right = min(target.width, Int(ceil(viewport.originX + viewport.width)))
         let bottom = min(target.height, Int(ceil(viewport.originY + viewport.height)))
         encoder.setScissorRect(.init(x: left, y: top, width: max(0, right - left), height: max(0, bottom - top)))
-        textScale = max(0.25, viewport.width / 1280)
+        textScale = max(0.25, viewport.height / 720)
+        textCanvasWidth = viewport.width / textScale
     }
     
     private func target(key: String, width: Int, height: Int) throws -> any MTLTexture {
@@ -602,7 +639,7 @@ extension StoryRenderer {
     ) throws {
         if let texture = try text.texture(
             text: string,
-            width: max(1, Int(Double(rect.z) * 1280 * textScale)),
+            width: max(1, Int(Double(rect.z) * textCanvasWidth * textScale)),
             height: max(1, Int(Double(rect.w) * 720 * textScale)),
             size: size * textScale,
             centered: centered,
@@ -786,7 +823,7 @@ extension StoryRenderer {
         let size =
             text.fittingSize(
                 text: stage.place,
-                width: 346.666667 * textScale,
+                width: 346.666667 / 1280 * textCanvasWidth * textScale,
                 minimum: 12 * textScale,
                 maximum: 26.666667 * textScale,
                 step: 2 / 3 * textScale

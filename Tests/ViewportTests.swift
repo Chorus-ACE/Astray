@@ -32,7 +32,10 @@ private struct ViewportTests {
             )
             precondition(viewport.originX + viewport.width <= safe.maxX + 1)
             precondition(viewport.originY + viewport.height <= safe.maxY + 1)
-            precondition(abs(viewport.width / viewport.height - 16 / 9) < 0.0001)
+            precondition(abs(viewport.originX - safe.minX) < 0.0001)
+            precondition(abs(viewport.originY - safe.minY) < 0.0001)
+            precondition(abs(viewport.width - safe.width) < 0.0001)
+            precondition(abs(viewport.height - safe.height) < 0.0001)
         }
         
         let background = try solidBackground()
@@ -43,6 +46,10 @@ private struct ViewportTests {
             precondition(filled.originX <= 0 && filled.originY <= 0)
             precondition(filled.originX + filled.width >= Double(size.0))
             precondition(filled.originY + filled.height >= Double(size.1))
+            let characters = renderer.characterViewport(width: size.0, height: size.1)
+            precondition(characters.originY == 0 && characters.height == Double(size.1))
+            precondition(abs(characters.width / characters.height - 16 / 9) < 0.0001)
+            precondition(abs(characters.originX + characters.width / 2 - Double(size.0) / 2) < 0.0001)
             let descriptor = MTLTextureDescriptor.texture2DDescriptor(
                 pixelFormat: .bgra8Unorm,
                 width: size.0,
@@ -96,6 +103,16 @@ private struct ViewportTests {
             }
             precondition(view.choiceIndex(at: .zero) == nil)
         }
+        let position = player.snippetIndex
+        let elapsed = player.elapsedTime
+        let status = player.status
+        let scene = player.scenario
+        for size in [CGSize(width: 393, height: 852), .init(width: 852, height: 393)] {
+            view.frame.size = size
+            view.configure(scalesToFill: size.width > size.height, top: 0, leading: 62, bottom: 21, trailing: 0)
+            precondition(player.snippetIndex == position && player.elapsedTime == elapsed)
+            precondition(player.status == status && player.scenario == scene)
+        }
         view.configure(scalesToFill: false, top: 0, leading: 62, bottom: 21, trailing: 0)
         let fitted = renderer.interfaceViewport(
             width: Int(view.drawableSize.width),
@@ -108,7 +125,7 @@ private struct ViewportTests {
         precondition(fitted.originX == original.originX && fitted.originY == original.originY)
         precondition(fitted.width == original.width && fitted.height == original.height)
         print(
-            "PASS: fullscreen edge pixels, fit/fill aspect ratios, safe dialogue viewport, rotated insets, and choice hit testing."
+            "PASS: filled background edges, height-based character framing, full-width safe dialogue, rotation progress, and choice hit testing."
         )
     }
     
