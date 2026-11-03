@@ -105,13 +105,13 @@ private struct RenderResourcesTests {
         _ = NSApplication.shared
         let size = CGSize(width: 641.25, height: 359.5)
         for scale in [CGFloat(1), 2, 3] {
-            let pixels = MetalStoryView.pixelSize(for: size, scale: scale)
+            let pixels = _MetalStoryView.pixelSize(for: size, scale: scale)
             try check(
                 pixels.width == ceil(size.width * scale) && pixels.height == ceil(size.height * scale),
                 "Incorrect backing pixel conversion"
             )
         }
-        let view = MetalStoryView(renderer: renderer)
+        let view = _MetalStoryView(renderer: renderer)
         view.isPaused = true
         let window = NSWindow(
             contentRect: .init(x: 0, y: 0, width: 640, height: 360),
@@ -125,14 +125,14 @@ private struct RenderResourcesTests {
         let scale = window.backingScaleFactor
         try check(view.preferredFramesPerSecond == 120, "Frame-rate preference is not 120")
         try check(
-            view.drawableSize == MetalStoryView.pixelSize(for: view.bounds.size, scale: scale),
+            view.drawableSize == _MetalStoryView.pixelSize(for: view.bounds.size, scale: scale),
             "Drawable size does not match the attached screen scale"
         )
         try check(view.layer?.contentsScale == scale, "Metal layer scale differs from the window")
         view.frame.size = .init(width: 801, height: 451)
         view.layoutSubtreeIfNeeded()
         try check(
-            view.drawableSize == MetalStoryView.pixelSize(for: view.bounds.size, scale: scale),
+            view.drawableSize == _MetalStoryView.pixelSize(for: view.bounds.size, scale: scale),
             "Resize lost backing scale"
         )
         print("PASS: attached screen @\(scale)x, drawable \(view.drawableSize).")

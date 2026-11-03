@@ -7,6 +7,8 @@ public final class StoryRenderer {
     public let player: StoryPlayer
     public let device: any MTLDevice
     public var characterRenderer: (any CharacterRendering)?
+    internal var scalesToFill = false
+    internal var interfaceBounds: CGRect?
     private let live2D: Live2DRenderer
     private let effects: EffectRuntime
     private let queue: any MTLCommandQueue
@@ -131,7 +133,7 @@ public final class StoryRenderer {
         let stage = player.stage
         let delta = max(0, player.visualTime - lastTime)
         lastTime = player.visualTime
-        let viewport = Self.viewport(width: target.width, height: target.height)
+        let viewport = Self.viewport(width: target.width, height: target.height, scalesToFill: scalesToFill)
         textScale = max(0.25, viewport.width / 1280)
         live2D.stageHeight = max(1, Int(viewport.height))
         let characters = stage.characters.values.sorted { $0.depth == $1.depth ? $0.id < $1.id : $0.depth < $1.depth }
@@ -295,15 +297,8 @@ public final class StoryRenderer {
             clear: .init(red: 0.025, green: 0.03, blue: 0.045, alpha: 1)
         )
         output.label = "Astray post processing and interface"
-        output.setViewport(viewport)
-        output.setScissorRect(
-            .init(
-                x: Int(viewport.originX),
-                y: Int(viewport.originY),
-                width: Int(viewport.width),
-                height: Int(viewport.height)
-            )
-        )
+        let interfaceViewport = interfaceViewport(width: target.width, height: target.height)
+        setViewport(viewport, target: target, encoder: output)
         do {
             draw(
                 composed,
@@ -315,15 +310,24 @@ public final class StoryRenderer {
                 draw(movie, rect: .init(0, 0, 1, 1), uv: aspectFill(movie, aspect: 16 / 9), encoder: output)
             }
             if player.dialogue.isVisible && !player.isDialogueHidden && !player.dialogue.isFullScreen {
+                drawDialogueBackground(player.dialogue, encoder: output)
+                setViewport(interfaceViewport, target: target, encoder: output)
                 try drawDialogue(player.dialogue, encoder: output)
             }
+            setViewport(interfaceViewport, target: target, encoder: output)
             try drawPlace(stage, encoder: output)
+            setViewport(viewport, target: target, encoder: output)
             if stage.cover.w > 0 { draw(white, rect: .init(0, 0, 1, 1), color: stage.cover, encoder: output) }
+            setViewport(interfaceViewport, target: target, encoder: output)
             try drawCaption(stage, encoder: output)
             if player.dialogue.isVisible && player.dialogue.isFullScreen {
+                setViewport(viewport, target: target, encoder: output)
+                drawFullScreenTextBackground(player.dialogue, encoder: output)
+                setViewport(interfaceViewport, target: target, encoder: output)
                 try drawFullScreenText(player.dialogue, encoder: output)
             }
             try drawChoices(stage, encoder: output)
+            setViewport(viewport, target: target, encoder: output)
             if stage.isWipeVisible { try drawWipe(stage, encoder: output) }
         } catch { output.endEncoding(); throw error }
         output.endEncoding()
@@ -334,8 +338,10 @@ public final class StoryRenderer {
         return commandBuffer
     }
     
-    internal static func viewport(width: Int, height: Int) -> MTLViewport {
-        let scale = min(Double(width) / 1280, Double(height) / 720)
+    internal static func viewport(width: Int, height: Int, scalesToFill: Bool = false) -> MTLViewport {
+        let horizontal = Double(width) / 1280
+        let vertical = Double(height) / 720
+        let scale = scalesToFill ? max(horizontal, vertical) : min(horizontal, vertical)
         return .init(
             originX: (Double(width) - 1280 * scale) / 2,
             originY: (Double(height) - 720 * scale) / 2,
@@ -346,8 +352,40 @@ public final class StoryRenderer {
         )
     }
     
-    internal static func choiceRect(index: Int, count: Int) -> SIMD4<Float> {
-        .init((index == 0 ? 160 : 773.333333) / 1280, 328 / 720, 346.666667 / 1280, 64 / 720)
+    internal static func choiceRect(index: Int, count: Int, scale: Float = 1) -> SIMD4<Float> {
+        let original = SIMD4<Float>((index == 0 ? 160 : 773.333333) / 1280, 328 / 720, 346.666667 / 1280, 64 / 720)
+        return .init(
+            0.5 + (original.x - 0.5) * scale,
+            0.5 + (original.y - 0.5) * scale,
+            original.z * scale,
+            original.w * scale
+        )
+    }
+    
+    internal func interfaceViewport(width: Int, height: Int) -> MTLViewport {
+        let bounds = CGRect(x: 0, y: 0, width: width, height: height)
+        let safeBounds = scalesToFill ? (interfaceBounds ?? bounds).intersection(bounds) : bounds
+        guard !safeBounds.isNull, safeBounds.width > 0, safeBounds.height > 0 else {
+            return Self.viewport(width: width, height: height)
+        }
+        var viewport = Self.viewport(width: Int(safeBounds.width), height: Int(safeBounds.height))
+        viewport.originX += safeBounds.minX
+        viewport.originY += safeBounds.minY
+        return viewport
+    }
+    
+    private func setViewport(
+        _ viewport: MTLViewport,
+        target: any MTLTexture,
+        encoder: any MTLRenderCommandEncoder
+    ) {
+        encoder.setViewport(viewport)
+        let left = max(0, Int(floor(viewport.originX)))
+        let top = max(0, Int(floor(viewport.originY)))
+        let right = min(target.width, Int(ceil(viewport.originX + viewport.width)))
+        let bottom = min(target.height, Int(ceil(viewport.originY + viewport.height)))
+        encoder.setScissorRect(.init(x: left, y: top, width: max(0, right - left), height: max(0, bottom - top)))
+        textScale = max(0.25, viewport.width / 1280)
     }
     
     private func target(key: String, width: Int, height: Int) throws -> any MTLTexture {
@@ -582,15 +620,18 @@ extension StoryRenderer {
         }
     }
     
-    private func drawDialogue(_ dialogue: DialogueState, encoder: any MTLRenderCommandEncoder) throws {
-        let opacity = dialogue.opacity
+    private func drawDialogueBackground(_ dialogue: DialogueState, encoder: any MTLRenderCommandEncoder) {
         draw(
             white,
             rect: .init(0, 0, 1, 1),
-            color: .init(0, 0, 34 / 255, opacity),
+            color: .init(0, 0, 34 / 255, dialogue.opacity),
             effects: .init(9, 0, 0, 0),
             encoder: encoder
         )
+    }
+    
+    private func drawDialogue(_ dialogue: DialogueState, encoder: any MTLRenderCommandEncoder) throws {
+        let opacity = dialogue.opacity
         if !dialogue.speaker.isEmpty {
             draw(
                 white,
@@ -783,7 +824,7 @@ extension StoryRenderer {
         )
     }
     
-    private func drawFullScreenText(_ dialogue: DialogueState, encoder: any MTLRenderCommandEncoder) throws {
+    private func drawFullScreenTextBackground(_ dialogue: DialogueState, encoder: any MTLRenderCommandEncoder) {
         draw(
             white,
             rect: .init(0, 0, 1, 1),
@@ -797,6 +838,9 @@ extension StoryRenderer {
             color: .init(0, 0, 0, 1),
             encoder: encoder
         )
+    }
+    
+    private func drawFullScreenText(_ dialogue: DialogueState, encoder: any MTLRenderCommandEncoder) throws {
         let lines = dialogue.body.components(separatedBy: "\n").count
         let y = Float(160 + max(0, (400 - Double(lines) * 37.333333 * 1.68) / 2)) / 720
         let rect = SIMD4<Float>(186.666667 / 1280, y, (1280 - 186.666667) / 1280, 400 / 720)
@@ -827,14 +871,8 @@ extension StoryRenderer {
     private func drawChoices(_ stage: StageState, encoder: any MTLRenderCommandEncoder) throws {
         guard !stage.choices.isEmpty, stage.choiceScale > 0 else { return }
         for (index, choice) in stage.choices.enumerated() {
-            let original = Self.choiceRect(index: index, count: stage.choices.count)
             let scale = stage.choiceScale
-            let rect = SIMD4<Float>(
-                0.5 + (original.x - 0.5) * scale,
-                0.5 + (original.y - 0.5) * scale,
-                original.z * scale,
-                original.w * scale
-            )
+            let rect = Self.choiceRect(index: index, count: stage.choices.count, scale: scale)
             if let pill = try texture(for: .ui("scenario/btn_round_h80_wh.png")) {
                 let side = 34 / 1280.0 * scale
                 let slice: Float = min(0.5, 51 / Float(pill.width))

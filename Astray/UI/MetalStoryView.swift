@@ -10,6 +10,7 @@ public final class _MetalStoryView: MTKView {
     
     public let renderer: StoryRenderer
     private let driver: StoryViewDriver
+    private var interfaceInsets: (top: CGFloat, leading: CGFloat, bottom: CGFloat, trailing: CGFloat) = (0, 0, 0, 0)
     
     public init(renderer: StoryRenderer) {
         self.renderer = renderer
@@ -40,6 +41,18 @@ public final class _MetalStoryView: MTKView {
     @available(*, unavailable)
     public required init(coder: NSCoder) { fatalError("Use init(renderer:).") }
     
+    internal func configure(
+        scalesToFill: Bool,
+        top: CGFloat,
+        leading: CGFloat,
+        bottom: CGFloat,
+        trailing: CGFloat
+    ) {
+        renderer.scalesToFill = scalesToFill
+        interfaceInsets = (top, leading, bottom, trailing)
+        synchronizeDrawableSize()
+    }
+    
     private func synchronizeDrawableSize() {
         guard bounds.width > 0, bounds.height > 0 else { return }
         #if os(macOS)
@@ -51,6 +64,13 @@ public final class _MetalStoryView: MTKView {
         #endif
         let size = Self.pixelSize(for: bounds.size, scale: scale)
         if drawableSize != size { drawableSize = size }
+        renderer.interfaceBounds = .init(
+            x: interfaceInsets.leading * size.width / bounds.width,
+            y: interfaceInsets.top * size.height / bounds.height,
+            width: max(1, bounds.width - interfaceInsets.leading - interfaceInsets.trailing) * size.width
+                / bounds.width,
+            height: max(1, bounds.height - interfaceInsets.top - interfaceInsets.bottom) * size.height / bounds.height
+        )
     }
     
     #if os(macOS)
@@ -98,23 +118,25 @@ public final class _MetalStoryView: MTKView {
     }
     #endif
     
+    internal func choiceIndex(at point: CGPoint) -> Int? {
+        guard bounds.width > 0, bounds.height > 0 else { return nil }
+        let viewport = renderer.interfaceViewport(width: Int(drawableSize.width), height: Int(drawableSize.height))
+        guard viewport.width > 0, viewport.height > 0 else { return nil }
+        let x = Float((point.x * drawableSize.width / bounds.width - viewport.originX) / viewport.width)
+        let y = Float((point.y * drawableSize.height / bounds.height - viewport.originY) / viewport.height)
+        let stage = renderer.player.stage
+        return stage.choices.indices.first { index in
+            let rect = StoryRenderer.choiceRect(index: index, count: stage.choices.count, scale: stage.choiceScale)
+            return x >= rect.x && x <= rect.x + rect.z && y >= rect.y && y <= rect.y + rect.w
+        }
+    }
+    
     private func activate(at point: CGPoint) {
-        let viewport = StoryRenderer.viewport(width: Int(bounds.width), height: Int(bounds.height))
-        guard viewport.width > 0, viewport.height > 0 else { return }
-        let x = Float((point.x - viewport.originX) / viewport.width)
-        let y = Float((point.y - viewport.originY) / viewport.height)
-        guard (0...1).contains(x), (0...1).contains(y) else { return }
         let player = renderer.player
         if player.stage.choices.isEmpty {
             player.advance()
-        } else {
-            for index in player.stage.choices.indices {
-                let rect = StoryRenderer.choiceRect(index: index, count: player.stage.choices.count)
-                if x >= rect.x, x <= rect.x + rect.z, y >= rect.y, y <= rect.y + rect.w {
-                    player.selectChoice(at: index)
-                    break
-                }
-            }
+        } else if let index = choiceIndex(at: point) {
+            player.selectChoice(at: index)
         }
     }
 }
@@ -138,7 +160,9 @@ private final class StoryViewDriver: NSObject, MTKViewDelegate {
             hidden: player.isDialogueHidden,
             automatic: player.isAutomatic,
             fast: player.isFastForwarding,
-            size: view.drawableSize
+            size: view.drawableSize,
+            scalesToFill: renderer.scalesToFill,
+            interfaceBounds: renderer.interfaceBounds
         )
         if player.status != .playing && player.status != .finished && lastState == state { return }
         guard let drawable = view.currentDrawable else { return }
@@ -163,5 +187,7 @@ private final class StoryViewDriver: NSObject, MTKViewDelegate {
         internal let automatic: Bool
         internal let fast: Bool
         internal let size: CGSize
+        internal let scalesToFill: Bool
+        internal let interfaceBounds: CGRect?
     }
 }

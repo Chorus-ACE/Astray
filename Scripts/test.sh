@@ -13,7 +13,7 @@ node Scripts/reference-cleista.cjs
 .build/fx-env/bin/python Tests/ConverterTests.py
 Scripts/build.sh macOS Debug
 products="$PWD/.build/Build/Intermediates.noindex/InstallIntermediates/macosx/Products/Debug"
-for suite in Playback AssetResolver Cleista Effects Live2D RenderResources PhysicsTiming MotionEvent AudioLifetime Movie Shader; do
+for suite in Playback AssetResolver Cleista Effects Live2D RenderResources PhysicsTiming MotionEvent AudioLifetime Movie Shader Viewport; do
     xcrun swiftc -swift-version 6 -parse-as-library \
         -module-cache-path .build/SwiftModuleCache -I Astray/Live2D/Bridge \
         -F "$products" -framework Astray \
