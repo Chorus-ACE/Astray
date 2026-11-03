@@ -1,0 +1,28 @@
+<!doctype html><html><head><link rel="icon" href="data:,"></head><body style="margin:0;overflow:hidden"><script type="module">
+import * as PIXI from 'pixi.js';
+import { Stage } from '/sekai-scenario-player/src/scenario/stage.ts';
+import { buildMotionIndex } from '/sekai-scenario-player/src/scenario/assets.ts';
+import { createAssetResolver, bindAssets } from '/sekai-scenario-player/src/scenario/resolver.ts';
+import { setCubismCoreUrl } from '/sekai-scenario-player/src/scenario/live2d.ts';
+Date.now = () => 0;
+PIXI.Ticker.shared.stop();
+const assets = '/.build/HarukiAssets/';
+setCubismCoreUrl(assets + 'lib/live2dcubismcore.min.js');
+const scene = await (await fetch(assets + 'comparison-scene.json')).json();
+const manifest = await (await fetch(assets + 'model_manifest.json')).json();
+const app = new PIXI.Application({width:1280,height:720,resolution:1,autoStart:false,antialias:true,preserveDrawingBuffer:true,backgroundColor:0x06080b});
+document.body.append(app.view);
+const clock = {epoch:0,scale:1,sleep:async()=>{},tween:async(ms,from,to,set)=>set(to)};
+const stage = new Stage(app, manifest, buildMotionIndex(scene), bindAssets(createAssetResolver(assets), {scenario:scene}), clock);
+await stage.changeBackground(scene.FirstBackground, 0);
+for (const c of scene.FirstLayout) {
+    await stage.appear(c.Character2dId,c.CostumeType,c.PositionSide,0,c.MotionName,c.FacialName);
+}
+PIXI.Ticker.shared.stop();
+for (const cm of stage.modelCache.values()) { cm.display.autoUpdate = false; cm.display.update(16.666667); }
+app.renderer.render(app.stage);
+for (const cm of stage.modelCache.values()) { cm.display.update(16.666667); }
+app.renderer.render(app.stage);
+window.reference = {app,stage};
+window.ready = true;
+</script></body></html>

@@ -1,0 +1,29 @@
+{
+    "ScenarioId": "astray_demo",
+    "Snippets": [
+        {"Action": 6, "ProgressBehavior": 1, "ReferenceIndex": 0},
+        {"Action": 6, "ProgressBehavior": 1, "ReferenceIndex": 1},
+        {"Action": 1, "ProgressBehavior": 1, "ReferenceIndex": 0},
+        {"Action": 1, "ProgressBehavior": 1, "ReferenceIndex": 1},
+        {"Action": 6, "ProgressBehavior": 1, "ReferenceIndex": 2},
+        {"Action": 1, "ProgressBehavior": 1, "ReferenceIndex": 2},
+        {"Action": 6, "ProgressBehavior": 1, "ReferenceIndex": 3},
+        {"Action": 6, "ProgressBehavior": 1, "ReferenceIndex": 4},
+        {"Action": 1, "ProgressBehavior": 1, "ReferenceIndex": 3},
+        {"Action": 6, "ProgressBehavior": 1, "ReferenceIndex": 5}
+    ],
+    "TalkData": [
+        {"WindowDisplayName": "旅人", "Body": "雨停了。远处的灯光，像是在等谁回来。"},
+        {"WindowDisplayName": "向导", "Body": "跟着那束光走吧。迷路的时候，故事才刚刚开始。"},
+        {"WindowDisplayName": "旅人", "Body": "原来每一条路，都有自己的答案。", "WhenFinishCloseWindow": 1},
+        {"WindowDisplayName": "Astray", "Body": "示例结束。你可以打开自己的剧情 JSON，或点击台词列表重新开始。", "WhenFinishCloseWindow": 1}
+    ],
+    "SpecialEffectData": [
+        {"EffectType": 8, "StringVal": "Astray\n循光而行"},
+        {"EffectType": 18, "StringVal": "雨后的街道"},
+        {"EffectType": 23, "StringVal": "走向灯光/留在这里听一会儿雨"},
+        {"EffectType": 4, "Duration": 0.6},
+        {"EffectType": 3, "Duration": 0.6},
+        {"EffectType": 2, "Duration": 1.2}
+    ]
+}

@@ -1,0 +1,176 @@
+{
+  "ScenarioId": "native_effects_demo",
+  "AppearCharacters": [
+    {
+      "Character2dId": 1,
+      "CostumeType": "Haru"
+    },
+    {
+      "Character2dId": 2,
+      "CostumeType": "Haru"
+    }
+  ],
+  "FirstLayout": [
+    {
+      "Character2dId": 1,
+      "CostumeType": "Haru",
+      "PositionSide": 3,
+      "MotionName": "Idle_0",
+      "FacialName": "F01"
+    },
+    {
+      "Character2dId": 2,
+      "CostumeType": "Haru",
+      "PositionSide": 5,
+      "MotionName": "Idle_0",
+      "FacialName": "F01"
+    }
+  ],
+  "TalkData": [
+    {
+      "TalkCharacters": [
+        {
+          "Character2dId": 900000
+        }
+      ],
+      "WindowDisplayName": "Haru · Haru",
+      "Body": "这段对话没有语音，文字时序仍会驱动两人的口型。暂停会同时冻结动作和口型。",
+      "LipSync": 0
+    },
+    {
+      "TalkCharacters": [
+        {
+          "Character2dId": 2
+        }
+      ],
+      "WindowDisplayName": "右侧的 Haru",
+      "Body": "左侧角色的模糊已经移除，我身上的显示器效果仍然保留。",
+      "LipSync": 0
+    },
+    {
+      "TalkCharacters": [
+        {
+          "Character2dId": 1
+        }
+      ],
+      "WindowDisplayName": "左侧的 Haru",
+      "Body": "现在换成全息材质。隐藏文字后，第一次点击只会恢复界面。",
+      "LipSync": 0
+    },
+    {
+      "TalkCharacters": [
+        {
+          "Character2dId": 1
+        }
+      ],
+      "WindowDisplayName": "Haru",
+      "Body": "效果对照结束。你也可以点击台词列表，跳回任意一段检查效果恢复。",
+      "LipSync": 0
+    }
+  ],
+  "SpecialEffectData": [
+    {
+      "EffectType": 24,
+      "StringVal": "<style=Title>文字与光影</style>\\n<color=#ff8040>彩色文字</color> · <style=Link>下划线样式</style>\\n<style=Quote>字号、斜体、对齐与缩进</style>"
+    },
+    {
+      "EffectType": 22,
+      "StringVal": "blur",
+      "StringValSub": "1.8",
+      "IntVal": 1
+    },
+    {
+      "EffectType": 22,
+      "StringVal": "monitor",
+      "IntVal": 2
+    },
+    {
+      "EffectType": 22,
+      "StringVal": "none",
+      "IntVal": 1
+    },
+    {
+      "EffectType": 22,
+      "StringVal": "hologram",
+      "IntVal": 1
+    },
+    {
+      "EffectType": 22,
+      "StringVal": "none",
+      "IntVal": 1
+    },
+    {
+      "EffectType": 22,
+      "StringVal": "none",
+      "IntVal": 2
+    }
+  ],
+  "Snippets": [
+    {
+      "Index": 0,
+      "Action": 6,
+      "ReferenceIndex": 0,
+      "ProgressBehavior": 1
+    },
+    {
+      "Index": 1,
+      "Action": 6,
+      "ReferenceIndex": 1,
+      "ProgressBehavior": 1
+    },
+    {
+      "Index": 2,
+      "Action": 6,
+      "ReferenceIndex": 2,
+      "ProgressBehavior": 1
+    },
+    {
+      "Index": 3,
+      "Action": 1,
+      "ReferenceIndex": 0,
+      "ProgressBehavior": 1
+    },
+    {
+      "Index": 4,
+      "Action": 6,
+      "ReferenceIndex": 3,
+      "ProgressBehavior": 1
+    },
+    {
+      "Index": 5,
+      "Action": 1,
+      "ReferenceIndex": 1,
+      "ProgressBehavior": 1
+    },
+    {
+      "Index": 6,
+      "Action": 6,
+      "ReferenceIndex": 4,
+      "ProgressBehavior": 1
+    },
+    {
+      "Index": 7,
+      "Action": 1,
+      "ReferenceIndex": 2,
+      "ProgressBehavior": 1
+    },
+    {
+      "Index": 8,
+      "Action": 6,
+      "ReferenceIndex": 5,
+      "ProgressBehavior": 1
+    },
+    {
+      "Index": 9,
+      "Action": 6,
+      "ReferenceIndex": 6,
+      "ProgressBehavior": 1
+    },
+    {
+      "Index": 10,
+      "Action": 1,
+      "ReferenceIndex": 3,
+      "ProgressBehavior": 1
+    }
+  ]
+}

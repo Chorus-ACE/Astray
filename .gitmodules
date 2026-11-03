@@ -1,0 +1,6 @@
+[submodule "Vendor/CubismNativeSamples"]
+	path = Vendor/CubismNativeSamples
+	url = https://github.com/Live2D/CubismNativeSamples.git
+[submodule "sekai-scenario-player"]
+	path = sekai-scenario-player
+	url = https://github.com/Team-Haruki/sekai-scenario-player.git

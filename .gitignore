@@ -1,0 +1,10 @@
+.build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+.DS_Store
+Vendor/CubismCore/
+cleista/
+!cleista/copy-scripts.js
+!cleista/*.sh
+

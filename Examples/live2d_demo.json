@@ -1,0 +1,88 @@
+{
+  "ScenarioId": "cubism_native_demo",
+  "AppearCharacters": [
+    {
+      "Character2dId": 1,
+      "CostumeType": "Haru"
+    }
+  ],
+  "FirstLayout": [
+    {
+      "Character2dId": 1,
+      "CostumeType": "Haru",
+      "PositionSide": 4,
+      "MotionName": "Idle_0",
+      "FacialName": "F01"
+    }
+  ],
+  "Snippets": [
+    {
+      "Action": 6,
+      "ReferenceIndex": 0,
+      "ProgressBehavior": 0
+    },
+    {
+      "Action": 1,
+      "ReferenceIndex": 0,
+      "ProgressBehavior": 0
+    },
+    {
+      "Action": 6,
+      "ReferenceIndex": 1,
+      "ProgressBehavior": 1
+    },
+    {
+      "Action": 1,
+      "ReferenceIndex": 1,
+      "ProgressBehavior": 0
+    },
+    {
+      "Action": 6,
+      "ReferenceIndex": 2,
+      "ProgressBehavior": 1
+    },
+    {
+      "Action": 6,
+      "ReferenceIndex": 3,
+      "ProgressBehavior": 1
+    },
+    {
+      "Action": 1,
+      "ReferenceIndex": 2,
+      "ProgressBehavior": 1
+    }
+  ],
+  "TalkData": [
+    {
+      "WindowDisplayName": "Haru",
+      "Body": "Cubism Core 正在原生驱动模型、表情和物理。周围的光点由 Metal Shuriken 运行时模拟。"
+    },
+    {
+      "WindowDisplayName": "Haru",
+      "Body": "镜头与粒子共用场景变换，UI 保持在独立图层。暂停和跳转会同步处理原生模型状态。"
+    },
+    {
+      "WindowDisplayName": "Astray",
+      "Body": "示例结束。可以打开自己的剧情 JSON 和素材目录继续播放。"
+    }
+  ],
+  "SpecialEffectData": [
+    {
+      "EffectType": 15,
+      "StringVal": "sparkles"
+    },
+    {
+      "EffectType": 43,
+      "StringVal": "1.12",
+      "Duration": 0.6
+    },
+    {
+      "EffectType": 16,
+      "StringVal": "sparkles"
+    },
+    {
+      "EffectType": 27,
+      "StringVal": "sepia"
+    }
+  ]
+}

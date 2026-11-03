@@ -1,0 +1,4 @@
+module AstrayCubismBridge {
+    header "AstrayCubismBridge.h"
+    export *
+}
