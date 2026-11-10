@@ -6,8 +6,31 @@ internal import CoreGraphics
 public final class StoryRenderer {
     public let player: StoryPlayer
     public let device: any MTLDevice
+    /// Viewer framing uses the model's initial drawable bottom as a fixed baseline.
+    public var anchorsModelToBottom = false
+
+    public func modelParameters() throws -> [ModelParameter] {
+        guard let character = player.stage.characters.values.first else { return [] }
+        return try live2D.parameters(for: character)
+    }
+
+    /// Warm the initial pose and measure its visible baseline before presenting it.
+    public func prepareModelPresentation() async throws {
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: 1280, height: 720, mipmapped: false)
+        descriptor.usage = [.renderTarget, .shaderRead]
+        guard let target = device.makeTexture(descriptor: descriptor) else { throw AstrayError.metalUnavailable }
+        var command: (any MTLCommandBuffer)?
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+            do {
+                command = try render(to: target, presenting: nil, completion: { continuation.resume() })
+            } catch { continuation.resume(throwing: error) }
+        }
+        guard command?.status == .completed else { throw AstrayError.renderingFailed("Unable to prepare the model pose.") }
+        live2D.finishBottomCalibration()
+    }
+
     public var characterRenderer: (any CharacterRendering)?
-    internal var scalesToFill = false
+    internal var scalesToFill = true
     internal var interfaceBounds: CGRect?
     private let live2D: Live2DRenderer
     private let effects: EffectRuntime
@@ -31,6 +54,13 @@ public final class StoryRenderer {
     private var textScale: Double = 1
     private var textCanvasWidth: Double = 1280
     private var continuationMark: (any MTLTexture)?
+    private var backdrop: (any MTLTexture)?
+
+    /// A static, aspect-filled backdrop behind the stage. Camera framing does
+    /// not affect it, and changing it preserves model and animation resources.
+    public func setBackdrop(_ data: Data?) throws {
+        backdrop = try data.map { try BitmapTexture.make(data: $0, device: device) }
+    }
     
     public init(player: StoryPlayer, device: (any MTLDevice)? = MTLCreateSystemDefaultDevice()) throws {
         guard let device, let queue = device.makeCommandQueue() else { throw AstrayError.metalUnavailable }
@@ -95,7 +125,7 @@ public final class StoryRenderer {
     }
     
     @discardableResult
-    internal func render(to target: any MTLTexture, presenting drawable: (any MTLDrawable)?) throws
+    internal func render(to target: any MTLTexture, presenting drawable: (any MTLDrawable)?, completion: (@Sendable () -> Void)? = nil) throws
         -> any MTLCommandBuffer
     {
         guard target.pixelFormat == .bgra8Unorm, target.sampleCount == 1,
@@ -200,6 +230,10 @@ public final class StoryRenderer {
         let backgroundViewport = Self.viewport(width: world.width, height: world.height, scalesToFill: true)
         let backgroundAspect = Float(world.width) / Float(world.height)
         do {
+            if let backdrop {
+                worldEncoder.setViewport(backgroundViewport)
+                draw(backdrop, rect: .init(0, 0, 1, 1), uv: aspectFill(backdrop, aspect: backgroundAspect), encoder: worldEncoder)
+            }
             worldEncoder.setViewport(characterViewport)
             try drawEffects(layer: .bottom, stage: stage, encoder: worldEncoder)
             worldEncoder.setViewport(backgroundViewport)
@@ -245,7 +279,7 @@ public final class StoryRenderer {
                 let rect = worldRect(
                     .init(
                         character.x - width / 2 + character.shake.x,
-                        0.811 - height / 2 + character.shake.y,
+                        (anchorsModelToBottom ? 1 + base * live2D.bottom(for: character) : 0.811) - height / 2 + character.shake.y,
                         width,
                         height
                     ),
@@ -342,6 +376,7 @@ public final class StoryRenderer {
         output.endEncoding()
         if let drawable { commandBuffer.present(drawable) }
         commandBuffer.addCompletedHandler { [frameSlots] _ in frameSlots.release(slot) }
+        if let completion { commandBuffer.addCompletedHandler { _ in completion() } }
         submitted = true
         commandBuffer.commit()
         return commandBuffer

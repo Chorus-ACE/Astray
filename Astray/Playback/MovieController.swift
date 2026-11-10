@@ -19,12 +19,13 @@ internal enum MovieAssetLoader {
         for name in Set(scenario.effects.filter { $0.type == 19 }.map(\.value)) {
             guard let url = resolver.url(for: .movie(name)) else { continue }
             do {
-                let asset = AVURLAsset(url: url)
+                guard let localURL = try await resolver.fileURL(for: .movie(name)) else { continue }
+                let asset = AVURLAsset(url: localURL)
                 let time = try await asset.load(.duration)
                 guard time.seconds.isFinite, time.seconds > 0 else {
                     throw AstrayError.invalidScenario("Invalid movie duration.")
                 }
-                result[name] = .init(url: url, duration: time.seconds)
+                result[name] = .init(url: localURL, duration: time.seconds)
             } catch is CancellationError { throw CancellationError() } catch {
                 await warning(.assetUnavailable(url, error.localizedDescription))
             }

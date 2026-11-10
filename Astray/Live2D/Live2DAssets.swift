@@ -1,5 +1,14 @@
 internal import Foundation
 
+/// The model-authored range and a snapshot of a Cubism parameter.
+public struct ModelParameter: Identifiable, Sendable {
+    public let id: String
+    public let minimum: Float
+    public let maximum: Float
+    public let defaultValue: Float
+    public let value: Float
+}
+
 public struct ModelManifestEntry: Codable, Sendable {
     public var modelDir: String
     public var modelFile: String
@@ -29,14 +38,15 @@ internal struct Live2DAssets: Sendable {
     internal let physics: Data?
     internal let pose: Data?
     internal let textures: [Data]
-    internal let motions: [String: Data]
-    internal let facials: [String: Data]
+    internal var motions: [String: Data]
+    internal var facials: [String: Data]
 }
 
 internal enum Live2DAssetLoader {
     internal static func load(
         scenario: Scenario,
         resolver: any AssetResolving,
+        progress: @MainActor (Int, Int) -> Void = { _, _ in },
         warning: @MainActor (AstrayError) -> Void
     ) async throws -> [String: Live2DAssets] {
         var costumes: [String: Int] = [:]
@@ -51,7 +61,9 @@ internal enum Live2DAssetLoader {
             manifest = try JSONDecoder().decode([String: ModelManifestEntry].self, from: data)
         } catch is CancellationError { throw CancellationError() } catch { return [:] }
         var output: [String: Live2DAssets] = [:]
-        for (costume, characterID) in costumes {
+        for (offset, pair) in costumes.sorted(by: { $0.key < $1.key }).enumerated() {
+            await progress(offset, costumes.count)
+            let (costume, characterID) = pair
             try Task.checkCancellation()
             guard let entry = manifest[costume],
                 let modelURL = resolver.url(for: .model(directory: entry.modelDir, file: entry.modelFile))
@@ -144,6 +156,7 @@ internal enum Live2DAssetLoader {
                 await warning(.assetUnavailable(modelURL, error.localizedDescription))
             }
         }
+        await progress(costumes.count, costumes.count)
         return output
     }
 }

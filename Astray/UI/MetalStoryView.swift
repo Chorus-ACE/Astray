@@ -155,6 +155,7 @@ private final class StoryViewDriver: NSObject, MTKViewDelegate {
         let player = renderer.player
         let state = State(
             revision: player.renderRevision,
+            modelControls: player.modelControlsRevision,
             assets: player.assetRevision,
             status: player.status,
             hidden: player.isDialogueHidden,
@@ -181,6 +182,7 @@ private final class StoryViewDriver: NSObject, MTKViewDelegate {
     
     private struct State: Equatable {
         internal let revision: Int
+        internal let modelControls: Int
         internal let assets: Int
         internal let status: PlaybackStatus
         internal let hidden: Bool

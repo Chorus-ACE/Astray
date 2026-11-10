@@ -21,6 +21,7 @@ public protocol AssetResolving: Sendable {
     func url(for request: AssetRequest) -> URL?
     func urls(for request: AssetRequest) -> [URL]
     func data(for request: AssetRequest) async throws -> Data?
+    func fileURL(for request: AssetRequest) async throws -> URL?
 }
 
 extension AssetResolving {
@@ -28,6 +29,18 @@ extension AssetResolving {
     
     public func data(for request: AssetRequest) async throws -> Data? {
         try await AssetLoader.data(from: urls(for: request))
+    }
+
+    /// Native media playback uses the same resource store as models and textures.
+    public func fileURL(for request: AssetRequest) async throws -> URL? {
+        var lastError: (any Error)?
+        for url in urls(for: request) {
+            do { return try await StoryAssetCache.shared.fileURL(at: url) }
+            catch is CancellationError { throw CancellationError() }
+            catch { try Task.checkCancellation(); lastError = error }
+        }
+        if let lastError { throw lastError }
+        return nil
     }
 }
 
@@ -84,24 +97,14 @@ internal struct AssetResult: Sendable {
 }
 
 internal enum AssetLoader {
-    internal static func data(at url: URL) async throws -> Data {
-        try Task.checkCancellation()
-        if url.isFileURL {
-            return try Data(contentsOf: url, options: .mappedIfSafe)
-        }
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 30
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
-            throw AstrayError.assetUnavailable(url, "HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)")
-        }
-        return data
+    internal static func data(at url: URL, revalidate: Bool = false) async throws -> Data {
+        try await StoryAssetCache.shared.data(at: url, revalidate: revalidate)
     }
-    
-    internal static func data(from urls: [URL]) async throws -> Data? {
+
+    internal static func data(from urls: [URL], revalidate: Bool = false) async throws -> Data? {
         var lastError: (any Error)?
         for url in urls {
-            do { return try await data(at: url) } catch is CancellationError { throw CancellationError() } catch {
+            do { return try await data(at: url, revalidate: revalidate) } catch is CancellationError { throw CancellationError() } catch {
                 try Task.checkCancellation()
                 lastError = error
             }

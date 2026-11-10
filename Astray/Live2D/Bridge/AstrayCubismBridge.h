@@ -24,12 +24,26 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly) BOOL verticesChanged;
 @end
 
+@interface ASRCubismParameter : NSObject
+@property(nonatomic, readonly) NSString *identifier;
+@property(nonatomic, readonly) float minimum;
+@property(nonatomic, readonly) float maximum;
+@property(nonatomic, readonly) float defaultValue;
+@property(nonatomic, readonly) float value;
+@end
+
 @interface ASRCubismModel : NSObject
 - (nullable instancetype)initWithMoc:(NSData *)moc
                            physics:(nullable NSData *)physics
                               pose:(nullable NSData *)pose
                              error:(NSError **)error NS_DESIGNATED_INITIALIZER;
 - (instancetype)init NS_UNAVAILABLE;
+@property(nonatomic, readonly) NSArray<ASRCubismParameter *> *parameters;
+@property(nonatomic) BOOL breathEnabled;
+@property(nonatomic) BOOL blinkEnabled;
+@property(nonatomic) BOOL locksTransform;
+@property(nonatomic) BOOL breathSwayEnabled;
+@property(nonatomic, copy) NSDictionary<NSString *, NSNumber *> *parameterOverrides;
 @property(nonatomic, readonly) float canvasWidth;
 @property(nonatomic, readonly) float canvasHeight;
 @property(nonatomic, readonly) BOOL isMotionPlaying;
@@ -41,6 +55,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)updateRenderDrawables;
 - (BOOL)loadMotion:(NSData *)data name:(NSString *)name facial:(BOOL)facial error:(NSError **)error;
 - (void)playMotion:(NSString *)motion facial:(NSString *)facial instant:(BOOL)instant;
+- (void)stopMotion;
+- (void)clearFacial;
 - (void)update:(double)delta time:(double)time mouth:(float)mouth;
 - (void)reset;
 @end

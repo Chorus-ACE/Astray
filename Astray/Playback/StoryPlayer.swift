@@ -53,6 +53,33 @@ public final class StoryPlayer {
     @ObservationIgnored private var shakeWindowUntil: Double = 0
     @ObservationIgnored private var placePhase: PlacePhase = .hidden
     @ObservationIgnored private var placeCloseReserved = false
+    @ObservationIgnored private var modelViewerCharacterID: Int?
+    @ObservationIgnored private var modelViewerManifestEntry: ModelManifestEntry?
+    @ObservationIgnored private var modelAnimationRequest = 0
+    @ObservationIgnored internal private(set) var modelControlsRevision = 0
+    public var isModelMotionLooping = true
+    public var isModelBreathEnabled = true {
+        didSet { if oldValue != isModelBreathEnabled { modelControlsRevision &+= 1 } }
+    }
+    public var isModelBlinkEnabled = true {
+        didSet { if oldValue != isModelBlinkEnabled { modelControlsRevision &+= 1 } }
+    }
+    public var usesFixedModelFraming = false {
+        didSet { if oldValue != usesFixedModelFraming { modelControlsRevision &+= 1 } }
+    }
+    public var isModelBreathSwayEnabled = false {
+        didSet { if oldValue != isModelBreathSwayEnabled { modelControlsRevision &+= 1 } }
+    }
+    public var modelParameterOverrides: [String: Float] = [:] {
+        didSet { if oldValue != modelParameterOverrides { modelControlsRevision &+= 1 } }
+    }
+    public var modelFaceTrackingValues: [String: Float] = [:] {
+        didSet { if oldValue != modelFaceTrackingValues { modelControlsRevision &+= 1 } }
+    }
+    /// A viewer's resting pose, used only while no body motion is selected.
+    public var modelRestingParameterValues: [String: Float] = [:] {
+        didSet { if oldValue != modelRestingParameterValues { modelControlsRevision &+= 1 } }
+    }
     
     public init() {
         audio.onError = { [weak self] error in
@@ -86,8 +113,90 @@ public final class StoryPlayer {
     public func load(data: Data, resolver: (any AssetResolving)? = nil) async throws {
         try await load(Scenario.decode(data), resolver: resolver)
     }
+
+    /// Loads one model for interactive inspection without running a story timeline.
+    public func loadModel(costume: String, characterID: Int, motion: String = "", facial: String = "",
+                          resolver: any AssetResolving) async throws {
+        try await load(.init(initialLayout: [.init(side: 4, characterID: characterID, costume: costume,
+                                                  motion: motion, facial: facial)]), resolver: resolver,
+                       loadsInterfaceAssets: false)
+        guard let assets = live2DAssets[costume] else {
+            throw AstrayError.invalidScenario("The selected Live2D model could not be loaded.")
+        }
+        guard motion.isEmpty || assets.motions[motion] != nil,
+              facial.isEmpty || assets.facials[facial] != nil else {
+            throw AstrayError.invalidScenario("The selected Live2D motion or expression is unavailable.")
+        }
+        modelParameterOverrides = [:]
+        modelViewerCharacterID = characterID
+        isDialogueHidden = true
+        stage.characters[characterID]?.scale = 0.58
+    }
+
+    public func replayModelMotion() {
+        guard let id = modelViewerCharacterID else { return }
+        stage.characters[id]?.motionRevision += 1
+    }
+
+    /// Replace only the requested animation channels on the active viewer model.
+    /// Missing clips are downloaded without unloading the model or resetting time.
+    public func setModelAnimation(motion: String? = nil, facial: String? = nil,
+                                  resolver: any AssetResolving) async throws {
+        guard let id = modelViewerCharacterID, let character = stage.characters[id] else { return }
+        modelAnimationRequest += 1
+        let request = modelAnimationRequest
+        let revision = assetRevision
+        let costume = character.costume
+        func checkCurrent() throws {
+            try Task.checkCancellation()
+            guard modelAnimationRequest == request, assetRevision == revision, modelViewerCharacterID == id,
+                  stage.characters[id]?.costume == costume else { throw CancellationError() }
+        }
+        var clips: [(String, String, Data)] = []
+        for (kind, name) in [("motion", motion), ("facial", facial)] {
+            guard let name, !name.isEmpty else { continue }
+            let existing = kind == "motion" ? live2DAssets[costume]?.motions[name] : live2DAssets[costume]?.facials[name]
+            guard existing == nil else { continue }
+            if modelViewerManifestEntry == nil {
+                guard let data = try await resolver.data(for: .modelManifest) else {
+                    throw AstrayError.invalidScenario("The model animation manifest is unavailable.")
+                }
+                try checkCurrent()
+                modelViewerManifestEntry = try JSONDecoder().decode([String: ModelManifestEntry].self, from: data)[costume]
+            }
+            guard let entry = modelViewerManifestEntry else {
+                throw AstrayError.invalidScenario("The model animation manifest is unavailable.")
+            }
+            let request = AssetRequest.motion(directory: entry.motionDir, base: entry.motionBase, kind: kind, name: name)
+            guard let data = try await resolver.data(for: request) else {
+                throw AstrayError.invalidScenario("The selected Live2D animation is unavailable.")
+            }
+            try checkCurrent()
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  json["Curves"] is [Any] || json["Parameters"] is [Any] else {
+                throw AstrayError.invalidScenario("The selected Live2D animation is invalid.")
+            }
+            clips.append((kind, name, data))
+        }
+        try checkCurrent()
+        for (kind, name, data) in clips {
+            if kind == "motion" { live2DAssets[costume]?.motions[name] = data }
+            else { live2DAssets[costume]?.facials[name] = data }
+        }
+        if let motion, stage.characters[id]?.motion != motion {
+            stage.characters[id]?.motion = motion
+            stage.characters[id]?.motionRevision += 1
+        }
+        if let facial { stage.characters[id]?.facial = facial }
+    }
+
+    /// Viewer camera coordinates are normalized to the available stage.
+    public func setModelFraming(zoom: Float = 1, x: Float = 0, y: Float = 0) {
+        guard modelViewerCharacterID != nil, zoom.isFinite, x.isFinite, y.isFinite else { return }
+        stage.camera = .init(-x, -y, max(0.25, min(zoom, 4)))
+    }
     
-    public func load(_ scenario: Scenario, resolver: (any AssetResolving)? = nil) async throws {
+    public func load(_ scenario: Scenario, resolver: (any AssetResolving)? = nil, loadsInterfaceAssets: Bool = true) async throws {
         try scenario.validate()
         reset()
         status = .loading
@@ -100,13 +209,17 @@ public final class StoryPlayer {
         let token = generation
         do {
             if let resolver {
-                let models = try await Live2DAssetLoader.load(scenario: scenario, resolver: resolver) {
+                let models = try await Live2DAssetLoader.load(scenario: scenario, resolver: resolver, progress: { [weak self] completed, total in
+                    guard let self, self.generation == token, total > 0 else { return }
+                    self.onEvent?(.loadProgress(completed: completed, total: total * 4))
+                }) {
                     [weak self] warning in
                     guard let self, self.generation == token else { return }
                     self.onEvent?(.warning(warning))
                 }
                 guard token == generation else { throw CancellationError() }
                 live2DAssets = models
+                onEvent?(.loadProgress(completed: 1, total: 4))
                 let prefabs = try await EffectAssetLoader.load(scenario: scenario, resolver: resolver) {
                     [weak self] warning in
                     guard let self, self.generation == token else { return }
@@ -114,6 +227,7 @@ public final class StoryPlayer {
                 }
                 guard token == generation else { throw CancellationError() }
                 prefabAssets = prefabs
+                onEvent?(.loadProgress(completed: 2, total: 4))
                 let movies = try await MovieAssetLoader.load(scenario: scenario, resolver: resolver) {
                     [weak self] warning in
                     guard let self, self.generation == token else { return }
@@ -121,7 +235,11 @@ public final class StoryPlayer {
                 }
                 guard token == generation else { throw CancellationError() }
                 movieAssets = movies
+                onEvent?(.loadProgress(completed: 3, total: 4))
                 let requests = scenario.assetRequests.filter { request in
+                    if !loadsInterfaceAssets {
+                        switch request { case .ui, .font: return false; default: break }
+                    }
                     if case .character(let costume) = request { return models[costume] == nil }
                     return true
                 }
@@ -134,7 +252,7 @@ public final class StoryPlayer {
                         default: self.onEvent?(.warning(error))
                         }
                     }
-                    self.onEvent?(.loadProgress(completed: count, total: total))
+                    self.onEvent?(.loadProgress(completed: total * 3 + count, total: total * 4))
                 }
             }
             try Task.checkCancellation()
@@ -255,6 +373,8 @@ public final class StoryPlayer {
     
     private func reset() {
         generation += 1
+        modelViewerCharacterID = nil
+        modelViewerManifestEntry = nil
         effectCommands.removeAll()
         isRestoringEffects = false
         active.removeAll()
@@ -307,6 +427,13 @@ public final class StoryPlayer {
         let token = generation
         elapsedTime += delta
         visualTime += realDelta
+        if let id = modelViewerCharacterID {
+            if isModelMotionLooping, let character = stage.characters[id], !character.motion.isEmpty,
+               motionIsPlaying?(id) == false {
+                stage.characters[id]?.motionRevision += 1
+            }
+            return
+        }
         audio.tick(delta)
         guard token == generation else { return }
         for (key, animation) in Array(animations) {

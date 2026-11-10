@@ -116,6 +116,16 @@ NSError *failure(NSString *detail) {
 @implementation ASRCubismDrawable
 @end
 
+@interface ASRCubismParameter ()
+@property(nonatomic, readwrite) NSString *identifier;
+@property(nonatomic, readwrite) float minimum;
+@property(nonatomic, readwrite) float maximum;
+@property(nonatomic, readwrite) float defaultValue;
+@property(nonatomic, readwrite) float value;
+@end
+@implementation ASRCubismParameter
+@end
+
 @implementation ASRCubismModel {
     CubismMoc *_moc;
     CubismModel *_model;
@@ -126,6 +136,8 @@ NSError *failure(NSString *detail) {
     CubismExpressionMotionManager *_expression;
     std::map<std::string, ACubismMotion *> _motions;
     std::map<std::string, ACubismMotion *> _facials;
+    NSDictionary<NSString *, NSNumber *> *_parameterIndices;
+    NSDictionary<NSString *, NSString *> *_parameterAliases;
     NSDictionary<NSString *, NSArray<NSNumber *> *> *_held;
     NSDictionary<NSString *, NSDictionary *> *_facialValues;
     NSDictionary<NSString *, NSNumber *> *_facialFrom;
@@ -160,6 +172,18 @@ NSError *failure(NSString *detail) {
     if (physics) { _physics = CubismPhysics::Create((const csmByte *)physics.bytes, (csmSizeInt)physics.length); }
     if (pose) { _pose = CubismPose::Create((const csmByte *)pose.bytes, (csmSizeInt)pose.length); }
     _facialValues = @{};
+    _breathEnabled = YES;
+    _blinkEnabled = YES;
+    _parameterOverrides = @{};
+    NSMutableDictionary *indices = [NSMutableDictionary dictionary];
+    NSMutableDictionary *aliases = [NSMutableDictionary dictionary];
+    for (int i = 0; i < _model->GetParameterCount(); ++i) {
+        NSString *identifier = [NSString stringWithUTF8String:_model->GetParameterId(i)->GetString().GetRawString()];
+        indices[identifier] = @(i);
+        aliases[[[identifier stringByReplacingOccurrencesOfString:@"_" withString:@""] lowercaseString]] = identifier;
+    }
+    _parameterIndices = indices;
+    _parameterAliases = aliases;
     _model->SaveParameters();
     return self;
 }
@@ -178,6 +202,20 @@ NSError *failure(NSString *detail) {
     }
 }
 
+- (NSArray<ASRCubismParameter *> *)parameters {
+    NSMutableArray *result = [NSMutableArray array];
+    for (int i = 0; i < _model->GetParameterCount(); ++i) {
+        ASRCubismParameter *parameter = [ASRCubismParameter new];
+        parameter.identifier = [NSString stringWithUTF8String:_model->GetParameterId(i)->GetString().GetRawString()];
+        parameter.minimum = _model->GetParameterMinimumValue(i);
+        parameter.maximum = _model->GetParameterMaximumValue(i);
+        parameter.defaultValue = _model->GetParameterDefaultValue(i);
+        parameter.value = _model->GetParameterValue(i);
+        [result addObject:parameter];
+    }
+    return result;
+}
+
 - (float)canvasWidth { return _model->GetCanvasWidth(); }
 - (float)canvasHeight { return _model->GetCanvasHeight(); }
 - (BOOL)isMotionPlaying { return !_body->IsFinished(); }
@@ -185,10 +223,40 @@ NSError *failure(NSString *detail) {
 - (BOOL)loadMotion:(NSData *)data name:(NSString *)name facial:(BOOL)facial error:(NSError **)error {
     NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:error];
     if (![json isKindOfClass:NSDictionary.class]) { return NO; }
+    // Some converted clips retain Cubism 2 IDs (PARAM_ARM_R_1) while the MOC
+    // uses Cubism 3 IDs (ParamArmR1). Match only existing model parameters.
+    NSMutableDictionary *normalized = [json mutableCopy];
+    for (NSString *collection in @[@"Curves", @"Parameters"]) {
+        if (![json[collection] isKindOfClass:NSArray.class]) { continue; }
+        NSMutableArray *items = [NSMutableArray array];
+        for (NSDictionary *item in json[collection]) {
+            NSMutableDictionary *copy = [item mutableCopy];
+            NSString *identifier = item[@"Id"];
+            if ([identifier isKindOfClass:NSString.class]) {
+                NSString *alias = _parameterAliases[[[identifier stringByReplacingOccurrencesOfString:@"_" withString:@""] lowercaseString]];
+                if (alias) { copy[@"Id"] = alias; }
+            }
+            [items addObject:copy];
+        }
+        normalized[collection] = items;
+    }
+    json = normalized;
+    // Preserve authored numeric spelling for the SDK's JSON reader while
+    // replacing only identifier tokens.
+    NSMutableString *source = [[NSMutableString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    NSRegularExpression *pattern = [NSRegularExpression regularExpressionWithPattern:@"\"Id\"\\s*:\\s*\"([^\"]+)\"" options:0 error:nil];
+    NSArray<NSTextCheckingResult *> *matches = [pattern matchesInString:source options:0 range:NSMakeRange(0, source.length)];
+    for (NSTextCheckingResult *match in matches.reverseObjectEnumerator) {
+        NSRange range = [match rangeAtIndex:1];
+        NSString *identifier = [source substringWithRange:range];
+        NSString *alias = _parameterAliases[[[identifier stringByReplacingOccurrencesOfString:@"_" withString:@""] lowercaseString]];
+        if (alias) { [source replaceCharactersInRange:range withString:alias]; }
+    }
+    NSData *normalizedData = [source dataUsingEncoding:NSUTF8StringEncoding];
     bool expression = [json[@"Type"] isEqual:@"Live2D Expression"];
     ACubismMotion *motion = expression
-        ? (ACubismMotion *)CubismExpressionMotion::Create((const csmByte *)data.bytes, (csmSizeInt)data.length)
-        : (ACubismMotion *)CubismMotion::Create((const csmByte *)data.bytes, (csmSizeInt)data.length);
+        ? (ACubismMotion *)CubismExpressionMotion::Create((const csmByte *)normalizedData.bytes, (csmSizeInt)normalizedData.length)
+        : (ACubismMotion *)CubismMotion::Create((const csmByte *)normalizedData.bytes, (csmSizeInt)normalizedData.length);
     if (!motion) {
         if (error) { *error = failure([@"Invalid motion: " stringByAppendingString:name]); }
         return NO;
@@ -252,6 +320,46 @@ NSError *failure(NSString *detail) {
     }
 }
 
+- (void)stopMotion {
+    _body->StopAllMotions();
+    _bodyName = nil;
+    for (int i = 0; i < _model->GetParameterCount(); ++i) {
+        _model->SetParameterValue(i, _model->GetParameterDefaultValue(i));
+    }
+    _model->SaveParameters();
+}
+
+- (void)clearFacial {
+    _facial->StopAllMotions();
+    _expression->StopAllMotions();
+    _facialName = nil;
+    _held = nil;
+    _facialFrom = nil;
+    _facialCurrent = nil;
+    _facialTime = 0;
+    _facialFade = 0;
+    _facialDuration = 0;
+}
+
+- (void)applyParameterOverrides {
+    if (_locksTransform) {
+        for (NSString *identifier in @[@"ParamSize", @"ParamScale", @"ParamScaleX", @"ParamScaleY", @"ParamPositionX", @"ParamPositionY"]) {
+            NSNumber *index = _parameterIndices[identifier];
+            if (index) { _model->SetParameterValue(index.intValue, _model->GetParameterDefaultValue(index.intValue)); }
+        }
+    }
+    for (NSString *identifier in _parameterOverrides) {
+        NSString *resolved = _parameterAliases[[[identifier stringByReplacingOccurrencesOfString:@"_" withString:@""] lowercaseString]] ?: identifier;
+        NSNumber *index = _parameterIndices[resolved];
+        float value = _parameterOverrides[identifier].floatValue;
+        if (index && std::isfinite(value)) {
+            int i = index.intValue;
+            _model->SetParameterValue(i, std::max(_model->GetParameterMinimumValue(i),
+                std::min(_model->GetParameterMaximumValue(i), value)));
+        }
+    }
+}
+
 - (void)update:(double)delta time:(double)time mouth:(float)mouth {
     _model->LoadParameters();
     _body->UpdateMotion(_model, (float)delta);
@@ -272,22 +380,37 @@ NSError *failure(NSString *detail) {
         current[identifier] = @(value);
     }
     _facialCurrent = current;
-    if (_blinkAt == 0) { _blinkAt = time + 1 + arc4random_uniform(4001) / 1000.0; }
-    double phase = -M_PI_2 + (time - _blinkAt) * 10;
-    if (time >= _blinkAt && phase <= M_PI_2) {
-        float eye = (float)std::abs(std::sin(phase));
-        for (auto name : {"ParamEyeLOpen", "ParamEyeROpen"}) {
-            auto identifier = ids->GetId(name);
-            _model->SetParameterValue(identifier, _model->GetParameterValue(identifier) * eye);
-        }
-    } else if (phase > M_PI_2) { _blinkAt = time + 1 + arc4random_uniform(4001) / 1000.0; }
-    _model->SetParameterValue(ids->GetId("ParamBreath"), (float)((std::sin(time * M_PI * 2 / 3) * 0.5 + 0.5) * 0.5));
+    if (_blinkEnabled) {
+        if (_blinkAt == 0) { _blinkAt = time + 1 + arc4random_uniform(4001) / 1000.0; }
+        double phase = -M_PI_2 + (time - _blinkAt) * 10;
+        if (time >= _blinkAt && phase <= M_PI_2) {
+            float eye = (float)std::abs(std::sin(phase));
+            for (auto name : {"ParamEyeLOpen", "ParamEyeROpen"}) {
+                auto identifier = ids->GetId(name);
+                _model->SetParameterValue(identifier, _model->GetParameterValue(identifier) * eye);
+            }
+        } else if (phase > M_PI_2) { _blinkAt = time + 1 + arc4random_uniform(4001) / 1000.0; }
+    } else { _blinkAt = 0; }
+    if (_breathEnabled) {
+        _model->SetParameterValue(ids->GetId("ParamBreath"), (float)((std::sin(time * M_PI * 2 / 3) * 0.5 + 0.5) * 0.5));
+    }
+    if (_breathSwayEnabled) {
+        // Match DoriKit Live2DView: blend each target into the authored pose
+        // at half weight instead of adding an offset to the animation.
+        _model->SetParameterValue(ids->GetId("ParamAngleX"), (float)std::sin(time * M_PI * 2 / 6.5345) * 7.5f, 0.5f);
+        _model->SetParameterValue(ids->GetId("ParamAngleY"), (float)std::sin(time * M_PI * 2 / 3.5345) * 4.0f, 0.5f);
+        _model->SetParameterValue(ids->GetId("ParamAngleZ"), (float)std::sin(time * M_PI * 2 / 5.5345) * 5.0f, 0.5f);
+        _model->SetParameterValue(ids->GetId("ParamBodyAngleX"), (float)std::sin(time * M_PI * 2 / 15.5345) * 2.0f, 0.5f);
+    }
     float baseWeight = _previousMouth >= 0.1f ? (std::abs(mouth - _previousMouth) < 0.1f ? 0.2f : 0.25f) : 0.6f;
     float weight = 1 - std::pow(1 - baseWeight, (float)std::min(0.25, std::max(0.0, delta)) * 60);
     _previousMouth += (mouth - _previousMouth) * weight;
     _model->SetParameterValue(ids->GetId("ParamMouthOpenY"), _previousMouth);
+    [self applyParameterOverrides];
     if (_physics) { _physics->Evaluate(_model, (float)delta); }
     if (_pose) { _pose->UpdateParameters(_model, (float)delta); }
+    // Physics may write parameters too, so apply overrides once more afterward.
+    [self applyParameterOverrides];
     _model->Update();
 }
 
@@ -398,6 +521,8 @@ NSError *failure(NSString *detail) {
 }
 @end
 #else
+@implementation ASRCubismParameter
+@end
 @implementation ASRCubismDrawable
 @end
 @implementation ASRCubismModel
@@ -405,6 +530,7 @@ NSError *failure(NSString *detail) {
     if (error) { *error = [NSError errorWithDomain:@"Astray.Cubism" code:2 userInfo:@{NSLocalizedDescriptionKey: @"Live2D does not distribute Cubism Core for visionOS in Native R4.1."}]; }
     return nil;
 }
+- (NSArray *)parameters { return @[]; }
 - (float)canvasWidth { return 0; }
 - (float)canvasHeight { return 0; }
 - (BOOL)isMotionPlaying { return NO; }
@@ -415,6 +541,8 @@ NSError *failure(NSString *detail) {
 - (void)updateRenderDrawables {}
 - (BOOL)loadMotion:(NSData *)data name:(NSString *)name facial:(BOOL)facial error:(NSError **)error { return NO; }
 - (void)playMotion:(NSString *)motion facial:(NSString *)facial instant:(BOOL)instant {}
+- (void)stopMotion {}
+- (void)clearFacial {}
 - (void)update:(double)delta time:(double)time mouth:(float)mouth {}
 - (void)reset {}
 @end

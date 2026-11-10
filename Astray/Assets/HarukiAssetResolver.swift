@@ -30,7 +30,7 @@ public struct HarukiAssetResolver: AssetResolving {
         guard let root = Self.japaneseAssetRoot(for: baseURL) else {
             throw AstrayError.invalidScenario("A Haruki asset URL must identify a region asset tree.")
         }
-        let data = try await AssetLoader.data(at: root.appending(path: "story-player/index.json"))
+        let data = try await AssetLoader.data(at: root.appending(path: "story-player/index.json"), revalidate: true)
         let index = try JSONDecoder().decode(Index.self, from: data)
         var eventBundle: String?
         var partVoices: [String: [String]] = [:]
@@ -171,7 +171,7 @@ public struct HarukiAssetResolver: AssetResolving {
             URL(string: "https://sekai-api-cdn.haruki.seiunx.com/v1/master/jp/files/\(name).json")!,
             URL(string: "https://raw.githubusercontent.com/Team-Haruki/haruki-sekai-master/main/master/\(name).json")!,
         ]
-        let data = try await AssetLoader.data(from: urls)!
+        let data = try await AssetLoader.data(from: urls, revalidate: true)!
         return try JSONDecoder().decode(EffectValue.self, from: data)
     }
     

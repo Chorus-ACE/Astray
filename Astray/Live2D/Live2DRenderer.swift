@@ -68,41 +68,66 @@ internal final class Live2DRenderer {
         commandBuffer: any MTLCommandBuffer,
         resources: FrameResources
     ) throws -> (any MTLTexture)? {
-        if revision != player.assetRevision {
-            models.removeAll()
-            textures.removeAll()
-            revision = player.assetRevision
-        }
-        guard let assets = player.live2DAssets[character.costume] else { return nil }
-        let key = Key(characterID: character.id, costume: character.costume)
-        let model: Model
-        if let existing = models[key] {
-            model = existing
-        } else {
-            model = try makeModel(assets, costume: character.costume)
-            models[key] = model
+        guard let assets = player.live2DAssets[character.costume], let model = try model(for: character) else { return nil }
+        finishBottomCalibration()
+        let rest = character.motion.isEmpty ? player.modelRestingParameterValues : [:]
+        let overrides = rest.merging(player.modelFaceTrackingValues) { _, tracked in tracked }
+            .merging(player.modelParameterOverrides) { _, manual in manual }
+        let controlsChanged = model.runtime.blinkEnabled != player.isModelBlinkEnabled
+            || model.runtime.locksTransform != player.usesFixedModelFraming
+            || model.runtime.breathEnabled != player.isModelBreathEnabled
+            || model.runtime.breathSwayEnabled != player.isModelBreathSwayEnabled
+            || model.overrides != overrides
+        model.runtime.blinkEnabled = player.isModelBlinkEnabled
+        model.runtime.locksTransform = player.usesFixedModelFraming
+        model.runtime.breathEnabled = player.isModelBreathEnabled
+        model.runtime.breathSwayEnabled = player.isModelBreathSwayEnabled
+        if model.overrides != overrides {
+            model.overrides = overrides
+            model.runtime.parameterOverrides = model.overrides.mapValues { NSNumber(value: $0) }
         }
         let first = model.motionRevision == -1
         let motionChanged = model.motionRevision != character.motionRevision
-        if first || motionChanged || model.lastFacial != character.facial {
+        let facialChanged = model.lastFacial != character.facial
+        // Register new clips on the existing Cubism instance and retain geometry,
+        // textures, physics and the other animation channel.
+        if !character.motion.isEmpty, !model.loadedMotions.contains(character.motion), let data = assets.motions[character.motion] {
+            try model.runtime.loadMotion(data, name: character.motion, facial: false)
+            model.loadedMotions.insert(character.motion)
+        }
+        if !character.facial.isEmpty, !model.loadedFacials.contains(character.facial), let data = assets.facials[character.facial] {
+            try model.runtime.loadMotion(data, name: character.facial, facial: true)
+            model.loadedFacials.insert(character.facial)
+        }
+        if motionChanged, character.motion.isEmpty { model.runtime.stopMotion() }
+        if facialChanged, character.facial.isEmpty { model.runtime.clearFacial() }
+        if first || motionChanged || facialChanged {
             model.runtime.playMotion(
                 motionChanged || first ? character.motion : "",
                 facial: character.facial,
-                instant: first
+                instant: first || player.status == .paused
             )
             model.motionRevision = character.motionRevision
             model.lastFacial = character.facial
         }
         let delta = max(0, time - (model.lastTime ?? time))
-        if first || delta > 0 {
-            if first { model.runtime.update(0, time: time - delta, mouth: character.mouthOpen) }
+        if first || motionChanged || facialChanged || controlsChanged || delta > 0 {
+            if first || motionChanged || facialChanged || controlsChanged { model.runtime.update(0, time: time - delta, mouth: character.mouthOpen) }
             Self.advance(model.runtime, by: delta, time: time, mouth: character.mouthOpen)
             model.lastTime = time
         }
         model.runtime.updateRenderDrawables()
+        if model.bottom == nil {
+            model.bottom = model.runtime.renderDrawables
+                .filter { $0.isVisible && $0.opacity > 0 && $0.vertexCount > 0 }
+                .map { $0.bounds.y }.min().map { $0 / model.runtime.canvasHeight }
+        }
         let extent = model.runtime.maximumDrawableExtent
-        model.renderWidth = max(model.renderWidth, extent.x * 2 + model.runtime.canvasWidth * 0.02)
-        model.renderHeight = max(model.renderHeight, extent.y * 2 + model.runtime.canvasHeight * 0.02)
+        if !player.usesFixedModelFraming || !model.hasRendered {
+            let padding: Float = player.usesFixedModelFraming ? 1.5 : 1.02
+            model.renderWidth = max(model.runtime.canvasWidth * padding, extent.x * 2 + model.runtime.canvasWidth * 0.02)
+            model.renderHeight = max(model.runtime.canvasHeight * padding, extent.y * 2 + model.runtime.canvasHeight * 0.02)
+        }
         let pixelsPerUnit = Double(stageHeight) * 2.08 * Double(character.scale) / Double(model.runtime.canvasHeight)
         let height = max(1, min(16384, Int(ceil(Double(model.renderHeight) * pixelsPerUnit))))
         let width = max(1, min(16384, Int(ceil(Double(model.renderWidth) * pixelsPerUnit))))
@@ -161,22 +186,81 @@ internal final class Live2DRenderer {
         guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass(for: model.target)) else {
             throw AstrayError.renderingFailed("Unable to encode a Cubism model.")
         }
-        defer { encoder.endEncoding() }
         encoder.label = "Cubism character \(character.id)"
         for index in model.drawOrder {
             let geometry = model.geometry[index]
             let drawable = geometry.drawable
             guard drawable.isVisible && drawable.opacity > 0 else { continue }
             guard let pipeline = pipelines[drawable.blendMode] else {
+                encoder.endEncoding()
                 throw AstrayError.renderingFailed("Unknown Cubism drawable blend mode: \(drawable.blendMode).")
             }
             encoder.setRenderPipelineState(pipeline)
             draw(geometry, model: model, encoder: encoder)
         }
+        encoder.endEncoding()
+        if player.usesFixedModelFraming && !model.hasRendered {
+            // Calibrate once from rendered alpha, excluding transparent texture padding.
+            let stride = (width * 4 + 255) / 256 * 256
+            if let buffer = device.makeBuffer(length: stride * height, options: .storageModeShared),
+               let blit = commandBuffer.makeBlitCommandEncoder() {
+                blit.copy(from: model.target, sourceSlice: 0, sourceLevel: 0,
+                          sourceOrigin: .init(x: 0, y: 0, z: 0), sourceSize: .init(width: width, height: height, depth: 1),
+                          to: buffer, destinationOffset: 0, destinationBytesPerRow: stride, destinationBytesPerImage: stride * height)
+                blit.endEncoding()
+                model.calibration = (buffer, commandBuffer, width, height, stride)
+            }
+        }
         model.hasRendered = true
         return model.target
     }
     
+    internal func finishBottomCalibration() {
+        for model in models.values {
+            guard let (buffer, command, width, height, stride) = model.calibration, command.status == .completed else { continue }
+            let pixels = buffer.contents().assumingMemoryBound(to: UInt8.self)
+            // Use the body's central lower edge, not long hair, ribbons or other
+            // side accessories that can extend below the feet (notably normal Miku).
+            let halfBody = max(1, Int(Float(width) * model.runtime.canvasHeight * 0.065 / model.renderWidth))
+            let body = max(0, width / 2 - halfBody)..<min(width, width / 2 + halfBody)
+            func bottomRow(in columns: Range<Int>) -> Int? {
+                for row in (0..<height).reversed() {
+                    if columns.contains(where: { pixels[row * stride + $0 * 4 + 3] > 32 }) { return row }
+                }
+                return nil
+            }
+            if let row = bottomRow(in: body) ?? bottomRow(in: 0..<width) {
+                model.bottom = (0.5 - Float(row + 1) / Float(height)) * model.renderHeight / model.runtime.canvasHeight
+            }
+            model.calibration = nil
+        }
+    }
+
+    private func model(for character: CharacterState) throws -> Model? {
+        if revision != player.assetRevision {
+            models.removeAll()
+            textures.removeAll()
+            revision = player.assetRevision
+        }
+        let key = Key(characterID: character.id, costume: character.costume)
+        if let existing = models[key] { return existing }
+        guard let assets = player.live2DAssets[character.costume] else { return nil }
+        let model = try makeModel(assets, costume: character.costume)
+        models[key] = model
+        return model
+    }
+
+    internal func parameters(for character: CharacterState) throws -> [ModelParameter] {
+        try model(for: character)?.runtime.parameters.map {
+            ModelParameter(id: $0.identifier, minimum: $0.minimum, maximum: $0.maximum,
+                           defaultValue: $0.defaultValue, value: $0.value)
+        } ?? []
+    }
+
+    internal func bottom(for character: CharacterState) -> Float {
+        models[.init(characterID: character.id, costume: character.costume)]?.bottom ?? -0.5
+    }
+
     internal func canvasScale(for character: CharacterState) -> SIMD2<Float> {
         guard let model = models[.init(characterID: character.id, costume: character.costume)] else { return .one }
         return .init(model.renderWidth / model.runtime.canvasHeight, model.renderHeight / model.runtime.canvasHeight)
@@ -226,13 +310,16 @@ internal final class Live2DRenderer {
             }
         }
         let width = max(1, min(4096, Int(1024 * runtime.canvasWidth / max(0.001, runtime.canvasHeight))))
-        return try .init(
+        let model = try Model(
             runtime: runtime,
             textures: textures,
             geometry: geometry,
             masks: masks,
             target: renderTexture(width: width, height: 1024)
         )
+        model.loadedMotions = Set(assets.motions.keys)
+        model.loadedFacials = Set(assets.facials.keys)
+        return model
     }
     
     private func draw(
@@ -337,12 +424,17 @@ internal final class Live2DRenderer {
         internal let masks: [Mask]
         internal var drawOrder: [Int]
         internal var hasRendered = false
+        internal var bottom: Float?
+        internal var calibration: ((any MTLBuffer), (any MTLCommandBuffer), Int, Int, Int)?
+        internal var overrides: [String: Float] = [:]
         internal var target: any MTLTexture
         internal var renderWidth: Float
         internal var renderHeight: Float
         internal var motionRevision = -1
         internal var lastFacial = ""
         internal var lastTime: Double?
+        internal var loadedMotions: Set<String> = []
+        internal var loadedFacials: Set<String> = []
         
         internal init(
             runtime: ASRCubismModel,

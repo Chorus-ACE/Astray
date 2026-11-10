@@ -8,7 +8,7 @@ public struct AstrayStoryView: View {
     
     public init(
         renderer: StoryRenderer,
-        contentMode: ContentMode = .fit,
+        contentMode: ContentMode = .fill,
         safeAreaInsets: EdgeInsets = .init()
     ) {
         self.renderer = renderer
